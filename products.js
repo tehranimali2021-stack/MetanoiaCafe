@@ -515,7 +515,7 @@ window.menuData = [
     "products": [
       {
         "name": "چای سیاه",
-        "price": "750،000",
+        "price": "75،000",
         "subtitle": "چای دمی لاهیجان",
         "tags": [
           "سنتی"
