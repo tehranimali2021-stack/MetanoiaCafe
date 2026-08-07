@@ -1,0 +1,722 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>منوی کافه متانویا</title>
+    <meta name="description" content="منوی دیجیتال کافه متانویا— اسپرسو، نوشیدنی گرم و سرد، دمنوش و چای">
+    <link rel="manifest" href="manifest.json">
+    <link rel="icon" id="app-favicon" href="icon.svg" type="image/svg+xml">
+    <link rel="apple-touch-icon" id="app-apple-icon" href="icon.svg">
+    <meta name="theme-color" id="app-theme-color" content="#1E1E1E">
+    <meta name="theme-color" content="#1E1E1E">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Lalezar&family=Vazirmatn:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+    <link rel="stylesheet" href="style.css">
+    <script src="products.js"></script>
+    <script src="brand.js"></script>
+</head>
+<body>
+    <div class="container">
+        <div class="header-actions">
+            <button class="header-btn" id="theme-btn">🌙 حالت تاریک</button>
+        </div>
+        <header>
+            <img id="brand-logo" src="icon.svg" class="coffee-bean-icon" 
+     alt="لوگو" width="64" height="64" loading="eager" fetchpriority="high">
+            <h1>کافه متانویا</h1>
+            <p>نوری در دل تاریکی</p>
+        </header>
+
+        <div class="menu-layout">
+            <!-- ستون اصلی منو -->
+            <main class="menu-column">
+                <input type="text" id="search-bar" class="search-input" placeholder="جستجوی عنوان محصول...">
+                <div class="filters-container" id="filters-wrapper"></div>
+                <div id="cafe-menu"></div>
+            </main>
+
+        <!-- ===== اطلاعات کافه (فاز ۴/۵) ===== -->
+        <aside class="info-column" id="cafe-info" aria-label="اطلاعات تماس و موقعیت کافه"></aside>
+    </div><!-- /container -->
+
+    <!-- دکمه بازگشت به بالا (فاز ۵) -->
+    <button id="back-to-top" class="back-to-top" type="button" aria-label="بازگشت به بالای صفحه" hidden>
+        ↑
+    </button>
+
+    <script>
+        // اسلایدر
+        let currentSlide = 0;
+
+        // منو
+        let activeCategory = "همه", searchQuery = "";
+        const menuContainer = document.getElementById('cafe-menu'), filtersWrapper = document.getElementById('filters-wrapper'), searchBar = document.getElementById('search-bar'), themeBtn = document.getElementById('theme-btn');
+
+        // آرایه آیکون‌ها برای فیلترها
+        const filterIcons = {
+            "همه": "📋",
+            "اسپرسوبار": "☕",
+            "نوشیدنی های گرم": "🫖",
+            "نوشیدنی های سرد": "🥤",
+            "شیک ها": "🍦",
+            "دمنوش ها": "🍵",
+            "چای ها": "🫖",
+            "باقلوا ها": "🥮",
+            "کیک ها": "🍰",
+            "صبحانه": "🥐",
+            "نوشیدنی های متفرقه": "🧋"
+        };
+        // آیکون پیش‌فرض در صورت عدم تطابق
+        const defaultIcon = "📦";
+
+        function normalize(str) {
+            return (str || '').replace(/ي/g, 'ی').replace(/ك/g, 'ک').toLowerCase();
+        }
+        function toPersianDigits(str) {
+            const en = "0123456789";
+            const fa = "۰۱۲۳۴۵۶۷۸۹";
+            return String(str).replace(/[0-9]/g, d => fa[en.indexOf(d)]);
+        }
+
+        function renderFilters() {
+            filtersWrapper.innerHTML = '';
+            if (!window.menuData) return;
+            
+            const categories = ["همه", ...window.menuData.map(g => g.category)];
+            categories.forEach(cat => {
+                const btn = document.createElement('div');
+                btn.className = `filter-btn ${activeCategory === cat ? 'active' : ''}`;
+                // دریافت آیکون از نقشه
+                const icon = filterIcons[cat] || defaultIcon;
+                btn.innerHTML = `<div class="filter-icon">${icon}</div><div class="filter-label">${cat}</div>`;
+                btn.onclick = () => { activeCategory = cat; updateUI(); };
+                filtersWrapper.appendChild(btn);
+            });
+        }
+
+/* ===================== فاز ۱ و ۲ — رندر منو ===================== */
+
+// تصویر جانشین در صورت خطای بارگذاری
+const FALLBACK_IMG = 'data:image/svg+xml;utf8,' + encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120">' +
+    '<rect width="120" height="120" fill="%23E6DDD1"/>' +
+    '<text x="60" y="66" font-size="34" text-anchor="middle" fill="%236B6B6B">☕</text></svg>'
+);
+
+/* ---------- ابزار کمکی: امن‌سازی متن برای HTML ---------- */
+function escHTML(v) {
+    return String(v == null ? '' : v)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+/**
+ * ساخت بلوک قیمت (تک‌قیمتی + چندقیمتی + ناموجود)
+ * @param {Object} p محصول
+ * @param {Boolean} isOut ناموجود بودن
+ */
+function buildPriceBlock(p, isOut) {
+    if (isOut) return '<span class="price-na">موقتاً ناموجود</span>';
+
+    const list = Array.isArray(p.prices)
+        ? p.prices.filter(v => v && String(v.price || '').trim())
+        : [];
+
+    // حالت چندقیمتی
+    if (list.length > 1 || (list.length === 1 && String(list[0].label || '').trim())) {
+        return '<div class="price-list">' + list.map(v => {
+            const lbl = String(v.label || '').trim();
+            return '<span class="price-row">'
+                 + (lbl ? `<span class="price-label">${escHTML(lbl)}</span>` : '')
+                 + `<span class="price-val">${toPersianDigits(v.price)} <span class="currency">تومان</span></span>`
+                 + '</span>';
+        }).join('') + '</div>';
+    }
+
+    // حالت تک‌قیمتی (چه از prices، چه از price قدیمی)
+    const single = list.length === 1 ? list[0].price : p.price;
+    return single && String(single).trim()
+        ? `${toPersianDigits(single)} <span class="currency">تومان</span>`
+        : '<span class="price-na">ناموجود</span>';
+}
+
+/**
+ * ساخت کارت عمودی محصول (فاز ۱ + وضعیت موجودی + چندقیمتی)
+ * @param {Object} p محصول
+ * @param {Number} i اندیس برای انیمیشن پله‌ای
+ */
+function buildProductCard(p, i) {
+    const img = p.image && p.image.trim() ? p.image : FALLBACK_IMG;
+    const isOut = p.available === false;
+
+    const sub = p.subtitle && p.subtitle.trim()
+        ? `<p class="product-sub">${escHTML(p.subtitle)}</p>` : '';
+
+    const tags = Array.isArray(p.tags) && p.tags.length
+        ? `<div class="product-tags">` +
+          p.tags.filter(Boolean).map(t => `<span class="product-tag">${escHTML(t)}</span>`).join('') +
+          `</div>`
+        : '';
+
+    const price = buildPriceBlock(p, isOut);
+    const name = escHTML(p.name || '');
+
+    return `
+    <article class="product-card${isOut ? ' is-unavailable' : ''}"
+             style="--delay:${Math.min(i, 12) * 35}ms" tabindex="0"
+             ${isOut ? 'aria-disabled="true"' : ''}>
+        <div class="product-thumb-wrap">
+            <img class="product-thumb" src="${escHTML(img)}" alt="${name || 'محصول'}"
+                 loading="lazy" decoding="async"
+                 onerror="this.onerror=null;this.src='${FALLBACK_IMG}';">
+            ${tags}
+        </div>
+        <div class="product-body">
+            <div class="product-main-row">
+                <h3 class="product-name" title="${name}">${name}</h3>
+                ${sub}
+            </div>
+            <div class="product-price">${price}</div>
+        </div>
+    </article>`;
+}
+        
+/**
+ * ساخت بلوک یک دسته همراه بنر (فاز ۲)
+ * @param {Object} cat دسته‌بندی
+ * @param {Array} items محصولات فیلترشده
+ */
+function buildCategoryBlock(cat, items) {
+    const icon = (typeof iconMap !== 'undefined' && iconMap[cat.category]) || '•';
+
+    // فاز ۲ — بنر دسته‌بندی: فقط اگر image مقدار داشته باشد
+    const banner = cat.image && cat.image.trim()
+        ? `<div class="category-banner">
+               <img src="${cat.image}" alt="${cat.category}" loading="lazy" decoding="async"
+                    onerror="this.closest('.category-banner').remove();">
+               <span class="category-banner-title">${cat.category}</span>
+           </div>`
+        : '';
+
+    return `
+    <section class="category-section" aria-label="${cat.category}">
+        ${banner}
+        <h2 class="category-title"><span class="cat-icon">${icon}</span>${cat.category}
+            <span class="cat-count">${toPersianDigits(items.length)}</span>
+        </h2>
+        <div class="products-grid">
+            ${items.map((p, i) => buildProductCard(p, i)).join('')}
+        </div>
+    </section>`;
+}
+/* ===== رندر منو ===== */
+function renderMenu() {
+    if (!menuContainer) return;
+
+    const q = normalize(searchQuery);
+    const sections = [];
+
+    (window.menuData || []).forEach(cat => {
+        // فیلتر دسته‌بندی
+        if (activeCategory !== "همه" && cat.category !== activeCategory) return;
+
+        // فیلتر جستجو
+        const items = (cat.products || []).filter(p => {
+            if (!q) return true;
+            const name = normalize(p.name);
+            const subtitle = normalize(p.subtitle || '');
+            return name.includes(q) || subtitle.includes(q);
+        });
+
+        if (items.length) {
+            items.sort((a, b) => (a.available === false) - (b.available === false));
+            sections.push(buildCategoryBlock(cat, items));
+        }
+    });
+
+    menuContainer.innerHTML = sections.length
+        ? sections.join('')
+        : '<div class="no-results" style="padding:2rem;text-align:center;color:#999;">محصولی یافت نشد.</div>';
+}
+/* ===================== اطلاعات کافه + لینک نقشه ===================== */
+function renderInfo() {
+    const box = document.getElementById('cafe-info') || document.querySelector('.info-column');
+    if (!box) return;
+
+    const c = window.cafeInfo || {};
+    const address = (c.address || '').trim();
+    const query = (c.mapQuery && c.mapQuery.trim()) ? c.mapQuery.trim() : address;
+    const hasGeo = Number.isFinite(c.lat) && Number.isFinite(c.lng);
+    const zoom = c.mapZoom || 16;
+
+    // لینک‌های مسیریابی
+    const gmapUrl = hasGeo
+        ? `https://www.google.com/maps/search/?api=1&query=${c.lat},${c.lng}`
+        : (query ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}` : '');
+
+    const neshanUrl = hasGeo
+        ? `https://neshan.org/maps/@${c.lat},${c.lng},${zoom}z`
+        : (query ? `https://neshan.org/maps/search/${encodeURIComponent(query)}` : '');
+
+    const baladUrl = hasGeo
+        ? `https://balad.ir/location?latitude=${c.lat}&longitude=${c.lng}&zoom=${zoom}`
+        : (query ? `https://balad.ir/search?text=${encodeURIComponent(query)}` : '');
+
+    const geoUrl = hasGeo ? `geo:${c.lat},${c.lng}?q=${c.lat},${c.lng}` : '';
+
+    // منبع iframe (بدون API Key)
+    const embedSrc = hasGeo
+        ? `https://maps.google.com/maps?q=${c.lat},${c.lng}&z=${zoom}&output=embed`
+        : (query ? `https://maps.google.com/maps?q=${encodeURIComponent(query)}&z=${zoom}&output=embed` : '');
+
+    /* ---------- فاز ۳: اسلایدر ---------- */
+    const imgs = Array.isArray(c.images) ? c.images.filter(Boolean) : [];
+    const n = imgs.length;
+
+    const slider = n ? `
+    <div class="slider" id="cafe-slider" tabindex="0"
+         role="group" aria-roledescription="اسلایدر" aria-label="تصاویر کافه">
+        <div class="slider-viewport">
+            <div class="slider-track">
+                ${imgs.map((src, i) => `
+                <div class="slide" role="group"
+                     aria-label="تصویر ${toPersianDigits(i + 1)} از ${toPersianDigits(n)}"
+                     aria-hidden="${i === 0 ? 'false' : 'true'}">
+                    <img src="${src}" alt="نمای کافه ${toPersianDigits(i + 1)}"
+                         ${i === 0 ? 'loading="eager" fetchpriority="high"' : 'loading="lazy"'}
+                         decoding="async"
+                         onerror="this.closest('.slide').classList.add('slide-error');">
+                </div>`).join('')}
+            </div>
+        </div>
+        ${n > 1 ? `
+        <button class="slider-btn prev" type="button" aria-label="تصویر قبلی">‹</button>
+        <button class="slider-btn next" type="button" aria-label="تصویر بعدی">›</button>
+        <div class="slider-dots" role="tablist" aria-label="انتخاب تصویر">
+            ${imgs.map((_, i) => `
+            <button type="button" class="${i === 0 ? 'active' : ''}"
+                    aria-current="${i === 0 ? 'true' : 'false'}"
+                    aria-label="تصویر ${toPersianDigits(i + 1)}"></button>`).join('')}
+        </div>` : ''}
+    </div>` : '';
+
+    /* ---------- ردیف‌های اطلاعات ---------- */
+    const rows = [];
+
+    if (address) {
+        rows.push(`
+        <div class="info-item">
+            <span class="icon" aria-hidden="true">📍</span>
+            ${gmapUrl
+                ? `<a class="info-link" href="${gmapUrl}" target="_blank" rel="noopener noreferrer"
+                       title="نمایش روی نقشه">${address}</a>`
+                : `<span>${address}</span>`}
+        </div>`);
+    }
+
+    if (c.phone) {
+        const telDigits = String(c.phone).replace(/[^\d+]/g, '');
+        rows.push(`
+        <div class="info-item">
+            <span class="icon" aria-hidden="true">☎️</span>
+            <a class="info-link" href="tel:${telDigits}" dir="ltr">${toPersianDigits(c.phone)}</a>
+        </div>`);
+    }
+
+    if (c.instagram) {
+        const id = String(c.instagram).replace(/^@/, '');
+        rows.push(`
+        <div class="info-item">
+            <span class="icon" aria-hidden="true">📸</span>
+            <a class="info-link" href="https://instagram.com/${id}"
+               target="_blank" rel="noopener noreferrer" dir="ltr">@${id}</a>
+        </div>`);
+    }
+
+    if (c.hours) {
+        rows.push(`
+        <div class="info-item">
+            <span class="icon" aria-hidden="true">🕒</span>
+            <span>${toPersianDigits(c.hours)}</span>
+        </div>`);
+    }
+
+    if (c.wifi) {
+        rows.push(`
+        <div class="info-item">
+            <span class="icon" aria-hidden="true">📶</span>
+            <span>وای‌فای: <bdi dir="ltr">${c.wifi}</bdi></span>
+        </div>`);
+    }
+
+    /* ---------- فاز ۴: بلوک نقشه ---------- */
+    const mapBlock = embedSrc ? `
+    <div class="map-embed" data-src="${embedSrc}" data-loaded="0">
+        <button type="button" class="map-placeholder" onclick="activateMap(this)"
+                aria-label="نمایش نقشه تعاملی موقعیت کافه">
+            <span class="map-pin" aria-hidden="true">🗺️</span>
+            <span class="map-ph-title">نمایش نقشه تعاملی</span>
+            <span class="map-ph-hint">برای صرفه‌جویی در مصرف داده، نقشه با کلیک شما بارگذاری می‌شود</span>
+        </button>
+    </div>` : '';
+
+    const mapLinks = (gmapUrl || neshanUrl || baladUrl) ? `
+    <div class="map-links" aria-label="مسیریابی با اپلیکیشن‌ها">
+        ${gmapUrl ? `<a class="map-chip" href="${gmapUrl}" target="_blank" rel="noopener noreferrer">گوگل مپ</a>` : ''}
+        ${neshanUrl ? `<a class="map-chip" href="${neshanUrl}" target="_blank" rel="noopener noreferrer">نشان</a>` : ''}
+        ${baladUrl ? `<a class="map-chip" href="${baladUrl}" target="_blank" rel="noopener noreferrer">بلد</a>` : ''}
+        ${geoUrl ? `<a class="map-chip" href="${geoUrl}">اپ نقشه گوشی</a>` : ''}
+    </div>` : '';
+
+        /* ---------- بلوک QR (بازگردانی‌شده) ---------- */
+    const qrBlock = `
+    <div class="qr-box">
+        <p>برای باز کردن منو، این کد را اسکن کنید</p>
+        <div id="qrcode" role="img" aria-label="کد QR منوی کافه متانویا"></div>
+    </div>`;
+    
+    box.innerHTML = `
+        <h3>${c.name || 'اطلاعات کافه'}</h3>
+        ${slider}
+        <div class="info-list">${rows.join('')}</div>
+        ${mapBlock}
+        ${mapLinks}
+        ${gmapUrl ? `
+        <a class="map-cta" href="${gmapUrl}" target="_blank" rel="noopener noreferrer">
+            🧭 مسیریابی تا کافه
+        </a>` : ''}
+        ${qrBlock}
+    `;
+
+    if (n) CafeSlider.init('#cafe-slider');
+    renderQRCode();
+}
+
+/* محافظ سازگاری اسلایدر: تطبیق با تعداد دلخواه تصاویر (فاز ۳ کامل نشده) */
+const CafeSlider = (function () {
+    let root = null, track = null, dots = [], idx = 0, count = 0;
+    let timer = null, startX = 0, deltaX = 0, dragging = false;
+
+    const AUTOPLAY_MS = 5000;
+    const SWIPE_THRESHOLD = 45; // پیکسل
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    function apply() {
+        if (!track || !count) return;
+        // track روی direction:ltr است؛ پس جهت حرکت همیشه منفی و قطعی است
+        track.style.transform = `translate3d(${-idx * 100}%, 0, 0)`;
+        dots.forEach((d, i) => {
+            const on = i === idx;
+            d.classList.toggle('active', on);
+            d.setAttribute('aria-current', on ? 'true' : 'false');
+        });
+        root.querySelectorAll('.slide').forEach((s, i) => {
+            s.setAttribute('aria-hidden', i === idx ? 'false' : 'true');
+        });
+    }
+
+    function goTo(i) {
+        if (!count) return;
+        idx = ((i % count) + count) % count; // پشتیبانی از حرکت حلقه‌ای
+        apply();
+    }
+    const next = () => goTo(idx + 1);
+    const prev = () => goTo(idx - 1);
+
+    function start() {
+        if (reduceMotion || count < 2 || timer) return;
+        timer = setInterval(next, AUTOPLAY_MS);
+    }
+    function stop() {
+        if (timer) { clearInterval(timer); timer = null; }
+    }
+    function restart() { stop(); start(); }
+
+    function onPointerDown(e) {
+        if (count < 2) return;
+        dragging = true; deltaX = 0;
+        startX = (e.touches ? e.touches[0].clientX : e.clientX);
+        stop();
+    }
+    function onPointerMove(e) {
+        if (!dragging) return;
+        const x = (e.touches ? e.touches[0].clientX : e.clientX);
+        deltaX = x - startX;
+    }
+    function onPointerUp() {
+        if (!dragging) return;
+        dragging = false;
+        if (Math.abs(deltaX) > SWIPE_THRESHOLD) {
+            // RTL: کشیدن به راست ⇒ تصویر قبلی
+            (deltaX > 0) ? prev() : next();
+        }
+        deltaX = 0;
+        start();
+    }
+
+    function init(selector) {
+        root = document.querySelector(selector || '#cafe-slider');
+        if (!root) return;
+
+        track = root.querySelector('.slider-track');
+        dots = Array.from(root.querySelectorAll('.slider-dots button'));
+        count = root.querySelectorAll('.slide').length;
+        idx = 0;
+
+        if (count < 2) {
+            root.querySelectorAll('.slider-btn, .slider-dots').forEach(el => el.remove());
+        }
+
+        root.querySelector('.slider-btn.prev')?.addEventListener('click', () => { prev(); restart(); });
+        root.querySelector('.slider-btn.next')?.addEventListener('click', () => { next(); restart(); });
+        dots.forEach((d, i) => d.addEventListener('click', () => { goTo(i); restart(); }));
+
+        // کیبورد (دسترس‌پذیری)
+        root.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowRight') { prev(); restart(); }
+            else if (e.key === 'ArrowLeft') { next(); restart(); }
+        });
+
+        // توقف هنگام تعامل کاربر
+        root.addEventListener('mouseenter', stop);
+        root.addEventListener('mouseleave', start);
+        root.addEventListener('focusin', stop);
+        root.addEventListener('focusout', start);
+
+        // لمسی
+        root.addEventListener('touchstart', onPointerDown, { passive: true });
+        root.addEventListener('touchmove', onPointerMove, { passive: true });
+        root.addEventListener('touchend', onPointerUp);
+
+        // صرفه‌جویی منابع در تب پنهان
+        document.addEventListener('visibilitychange', () => {
+            document.hidden ? stop() : start();
+        });
+
+        apply();
+        start();
+    }
+
+    return { init, goTo, next, prev, stop, start };
+})();
+
+/* ===================== فاز ۴ — فعال‌سازی نقشه با کلیک ===================== */
+window.activateMap = function (btn) {
+    const wrap = btn.closest('.map-embed');
+    if (!wrap || wrap.dataset.loaded === '1') return;
+    wrap.dataset.loaded = '1';
+
+    const iframe = document.createElement('iframe');
+    iframe.src = wrap.dataset.src;
+    iframe.title = 'نقشه موقعیت کافه';
+    iframe.loading = 'lazy';
+    iframe.referrerPolicy = 'no-referrer-when-downgrade';
+    iframe.allowFullscreen = true;
+    iframe.setAttribute('aria-label', 'نقشه موقعیت کافه');
+
+    wrap.innerHTML = '';
+    wrap.appendChild(iframe);
+};
+
+/* ===== تولید کد QR (نسخهٔ پایدار — تک‌خروجی و همگام) ===== */
+function renderQRCode(attempt) {
+    const host = document.getElementById('qrcode');
+    if (!host) return;
+
+    // اگر قبلاً با موفقیت ساخته شده، دوباره نساز
+    if (host.dataset.qrDone === '1' && host.firstElementChild) return;
+
+    const c = window.cafeInfo || {};
+    const fallbackUrl = 'https://metanoiacae2025-bot.github.io/MetanoiaCafe/';
+
+    let url = (c.menuUrl && String(c.menuUrl).trim())
+        ? String(c.menuUrl).trim()
+        : (window.location.protocol === 'file:' ? fallbackUrl : window.location.href);
+
+    url = url.split('#')[0]; // حذف هش برای اسکن تمیزتر
+
+    // نمایش نشانی به‌صورت لینک، وقتی ساخت تصویر ممکن نیست
+    const showLink = () => {
+        host.classList.remove('qr-canvas-mode');
+        host.innerHTML = '<a class="qr-fallback" href="' + url +
+            '" target="_blank" rel="noopener noreferrer" dir="ltr">' + url + '</a>';
+        host.dataset.qrDone = '1';
+    };
+
+    // کتابخانهٔ CDN هنوز نرسیده: حداکثر ۱۵ تلاش با فاصلهٔ ۴۰۰ میلی‌ثانیه
+    if (typeof QRCode === 'undefined') {
+        const n = attempt || 0;
+        if (n < 15) { setTimeout(() => renderQRCode(n + 1), 400); return; }
+        showLink();
+        return;
+    }
+
+    try {
+        host.innerHTML = '';
+        host.classList.remove('qr-canvas-mode');
+        host.dataset.qrDone = '0';
+
+        new QRCode(host, {
+            text: url,
+            width: 130,
+            height: 130,
+            colorDark: '#1E1E1E',
+            colorLight: '#ffffff',
+            correctLevel: QRCode.CorrectLevel.M
+        });
+
+        const canvas = host.querySelector('canvas');
+        const table  = host.querySelector('table'); // مسیر مرورگرهای بدون canvas
+
+        if (canvas) {
+            let dataUrl = '';
+            try { dataUrl = canvas.toDataURL('image/png'); } catch (e) { dataUrl = ''; }
+
+            host.innerHTML = ''; // جدا کردن عناصر داخلی کتابخانه (img و canvas)
+
+            if (dataUrl) {
+                const img = new Image(130, 130);
+                img.alt = '';            // توضیح روی div والد قرار دارد
+                img.decoding = 'sync';
+                img.src = dataUrl;
+                host.appendChild(img);
+            } else {
+                // مسیر جایگزین: خودِ بوم نمایش داده می‌شود
+                host.appendChild(canvas);
+                host.classList.add('qr-canvas-mode');
+            }
+
+            host.dataset.qrDone = '1';
+            return;
+        }
+
+        if (table) {                 // خروجی جدولی کتابخانه، همان‌جا می‌ماند
+            host.dataset.qrDone = '1';
+            return;
+        }
+
+        showLink();                  // هیچ خروجی گرافیکی تولید نشد
+    } catch (err) {
+        console.error('خطا در ساخت کد QR:', err);
+        showLink();
+    }
+}
+
+
+/* ===================== فاز ۵ — دکمه بازگشت به بالا ===================== */
+(function () {
+    const btn = document.getElementById('back-to-top');
+    if (!btn) return;
+    const toggle = () => { btn.hidden = window.scrollY < 400; };
+    window.addEventListener('scroll', toggle, { passive: true });
+    btn.addEventListener('click', () => window.scrollTo({ top: 0, behavior: 'smooth' }));
+    toggle();
+})();
+
+    const Branding = (function() {
+    const FALLBACK = 'data:image/svg+xml;utf8,' + encodeURIComponent(
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">' +
+        '<circle cx="32" cy="32" r="30" fill="%231E1E1E"/>' +
+        '<text x="32" y="42" font-size="28" text-anchor="middle" fill="%23E6DDD1">M</text></svg>'
+    );
+
+    function guessMime(path) {
+        const p = String(path).toLowerCase();
+        if (p.endsWith('.svg')) return 'image/svg+xml';
+        if (p.endsWith('.png')) return 'image/png';
+        if (p.endsWith('.webp')) return 'image/webp';
+        if (p.endsWith('.jpg') || p.endsWith('.jpeg')) return 'image/jpeg';
+        return 'image/png';
+    }
+
+    function apply() {
+        const b = window.cafeBrand || {};
+        const logo = String(b.logo || '').trim() || FALLBACK;
+
+        // لوگوی هدر
+        const img = document.getElementById('brand-logo');
+        if (img) {
+            img.onerror = () => { img.onerror = null; img.src = FALLBACK; };
+            img.src = logo;
+            img.alt = b.logoAlt || b.name || 'لوگو';
+            if (b.logoWidth) img.width = b.logoWidth;
+            if (b.logoHeight) img.height = b.logoHeight;
+        }
+
+        // favicon
+        const favicon = document.getElementById('app-favicon');
+        if (favicon) {
+            const src = b.favicon || logo;
+            favicon.setAttribute('href', src);
+            favicon.setAttribute('type', guessMime(src));
+        }
+
+        // آیکون iOS
+        const apple = document.getElementById('app-apple-icon');
+        if (apple) apple.setAttribute('href', b.appleTouchIcon || logo);
+
+        // رنگ تم
+        const theme = document.getElementById('app-theme-color');
+        if (theme && b.themeColor) theme.setAttribute('content', b.themeColor);
+
+        // عنوان
+        if (b.name) document.title = 'منوی ' + b.name;
+    }
+
+    return { apply };
+})();
+        function updateUI() { 
+            Branding.apply(); // ← این خط را اضافه کن
+            renderFilters(); 
+            renderMenu(); 
+            renderInfo(); 
+            // این یک خط کد اضافه شده تا صفحه به بالای منو برود
+            if (menuContainer) {
+                menuContainer.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+        }
+        searchBar.oninput = (e) => { searchQuery = e.target.value; renderMenu(); };
+        themeBtn.onclick = () => {
+            const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+            document.documentElement.setAttribute('data-theme', isDark ? '' : 'dark');
+            themeBtn.textContent = isDark ? '🌙 حالت تاریک' : '☀️ حالت روشن' ;
+        };
+
+        updateUI();
+        renderQRCode(0);
+
+        /* ===== ثبت Service Worker (فقط روی HTTPS یا localhost کار می‌کند) ===== */
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', async () => {
+        try {
+            const reg = await navigator.serviceWorker.register('sw.js', { scope: './' });
+
+            // آپدیت جدید پیدا شد → پس از آماده شدن، یک‌بار رفرش
+            reg.addEventListener('updatefound', () => {
+                const sw = reg.installing;
+                if (!sw) return;
+                sw.addEventListener('statechange', () => {
+                    if (sw.state === 'installed' && navigator.serviceWorker.controller) {
+                        sw.postMessage('SKIP_WAITING');
+                    }
+                });
+            });
+
+            let refreshed = false;
+            navigator.serviceWorker.addEventListener('controllerchange', () => {
+                if (refreshed) return;
+                refreshed = true;
+                window.location.reload();
+            });
+        } catch (e) {
+            console.warn('SW registration failed:', e);
+        }
+    });
+}
+    </script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+{
+  "name": "کافه متانویا",
+  "short_name": "متانویا",
+  "start_url": "index.html",
+  "display": "standalone",
+  "background_color": "#F7F4EF",
+  "theme_color": "#1F4E79",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "type": "image/svg+xml",
+      "sizes": "512x512",
+      "purpose": "any maskable"
+    }
+  ]
+}
