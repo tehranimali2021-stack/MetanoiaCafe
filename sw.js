@@ -1,6 +1,6 @@
 /* ===== Service Worker — کافه متانویا =====
    نسخه را در هر انتشار جدید بالا ببرید تا کش قدیمی پاک شود. */
-const VERSION = 'v1.11.9';
+const VERSION = 'v1.11.10';
 const STATIC_CACHE = `metanoia-static-${VERSION}`;
 const RUNTIME_CACHE = `metanoia-runtime-${VERSION}`;
 const IMAGE_CACHE = `metanoia-images-${VERSION}`;
